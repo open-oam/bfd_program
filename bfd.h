@@ -7,6 +7,12 @@
 #ifndef _BFD_H
 #define _BFD_H
 
+#define BFD_SIZE sizeof(struct bfd_control)
+
+// Perf event reasons
+#define REQUEST_SESSION_POLL 0
+#define REQUEST_SESSION_FINAL 1
+
 /* Diagnostic Codes */
 #define DIAG_NONE                       0
 #define DIAG_DETECT_TIME_EXPIRE         1
