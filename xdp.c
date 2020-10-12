@@ -66,17 +66,13 @@ BPF_MAP_ADD(perfmap);
 
 //Perf event map value
 struct perf_event_item {
-    // __u32 orig_time;
-    // __u64 rec_time;
-
-    __u8 reason;
-    
-    __u8 diagnostic;
+    __u16 reason;
+    __u16 diagnostic;
     __u32 my_discriminator;
     __u32 your_discriminator;
 };
 
-_Static_assert(sizeof(struct perf_event_item) == 9, "wrong size of perf_event_item");
+_Static_assert(sizeof(struct perf_event_item) == 12, "wrong size of perf_event_item");
 
 // __u16 calc_checksum_diff_u8(__u16 old_checksum, __u8 old_value, __u8 new_value, __u32 value_offset)
 // {
@@ -109,8 +105,8 @@ int xdp_prog(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
-    //Verifier check for packet size 
-    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_control) > data_end)
+    // Verifier check for packet size 
+    if (data + sizeof(struct ethhdr) > data_end)
         return XDP_PASS;
 
 
@@ -120,11 +116,105 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
+    // Verifier check for packet size
+    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr)  > data_end)
+        return XDP_PASS;
+
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
+
+    // Verifier check for packet size
+    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) > data_end)
+        return XDP_PASS;
 
     if (ip_header->protocol != IPPROTO_UDP) return XDP_PASS;
 
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
+
+    // Check destination port
+    __u32 key = 1;
+    __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
+    
+    if (udp_header->dest != *dst_port) {
+        return XDP_PASS;
+    }
+
+    // Verifier check for packet size
+    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_echo) > data_end)
+        return XDP_PASS;
+
+    // Check echo packet
+    if (udp_header->len == 8+sizeof(struct bfd_echo)) {
+
+        struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
+        if (echo_packet->version != 1) {
+            return XDP_DROP;
+        }
+
+        // Echo Logic
+        if (echo_packet->code == ECHO_REQUEST){
+
+            // Flip discriminators
+            __u32 temp_disc = echo_packet->my_disc;
+            echo_packet->my_disc = echo_packet->your_disc;
+            echo_packet->your_disc = temp_disc;
+
+            // Update echo packet code
+            echo_packet->code = ECHO_REPLY;
+
+            __u8 src_mac[ETH_ALEN];
+            __u8 dst_mac[ETH_ALEN];
+            memcpy(src_mac, eth_header->h_source, ETH_ALEN);
+            memcpy(dst_mac, eth_header->h_dest, ETH_ALEN);
+
+            //Swap MAC addresses
+            memcpy(eth_header->h_dest, src_mac, ETH_ALEN);
+            memcpy(eth_header->h_source, dst_mac, ETH_ALEN);
+
+            //Get IP addresses
+            __u32 src_ip = ip_header->saddr;
+            __u32 dst_ip = ip_header->daddr;
+
+            // //Swap IP addresses
+            ip_header->saddr = dst_ip;
+            ip_header->daddr = src_ip;
+
+            // Swap udp ports
+            __u16 src_port = udp_header->uh_sport;
+            __u16 dst_port = udp_header->uh_dport;
+
+            udp_header->uh_sport = dst_port;
+            udp_header->uh_dport = src_port;
+
+            // TODO get iface from map program_info
+            return bpf_redirect(0, 0);
+        }
+        else if (echo_packet->code == ECHO_REPLY){
+
+            __u32 my_discriminator = echo_packet->your_disc;
+            struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
+
+            // Check that discriminators are valid and that session map is valid
+            if (session_info == NULL || echo_packet->my_disc != session_info->your_discriminator)
+            {
+                return XDP_PASS;
+            }
+
+            struct perf_event_item event = {
+                .reason = ECHO_REPLY_RECEIVED,
+                .diagnostic = DIAG_NONE,
+                .my_discriminator = my_discriminator,
+                .your_discriminator = session_info->your_discriminator};
+
+            __u64 flags = BPF_F_CURRENT_CPU;
+            bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+
+            return XDP_DROP;
+        }
+    }
+
+    // Verifier check for packet size
+    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_control) > data_end)
+        return XDP_PASS;
 
     struct bfd_control *bfd_control_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
 

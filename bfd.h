@@ -12,6 +12,12 @@
 // Perf event reasons
 #define REQUEST_SESSION_POLL 0
 #define REQUEST_SESSION_FINAL 1
+#define RESPONSE_SESSION_PF 2
+#define ECHO_REPLY_RECEIVED 3
+
+// Echo Codes
+#define ECHO_REQUEST 0
+#define ECHO_REPLY 1
 
 /* Diagnostic Codes */
 #define DIAG_NONE                       0
@@ -52,6 +58,15 @@ struct bfd_control {
     __u32 desired_tx;
     __u32 required_rx;
     __u32 required_echo_rx;
+};
+
+struct bfd_echo {
+        __u8 version : 3,
+                code : 5;
+        
+        __u32 my_disc;
+        __u32 your_disc;
+        __u32 timestamp;
 };
 
 #endif              //_BFD_H
