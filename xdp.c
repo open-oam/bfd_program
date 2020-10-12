@@ -136,7 +136,7 @@ int xdp_prog(struct xdp_md *ctx) {
     __u64 rec_time = bpf_ktime_get_ns();
 
     // Check for request to start session
-    if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 1){
+    if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 1 && bfd_control_header->final == 0){
         
         // Generate discriminator
         __u32 my_discriminator = bpf_get_prandom_u32();
@@ -169,7 +169,7 @@ int xdp_prog(struct xdp_md *ctx) {
         bfd_control_header->your_disc = bfd_control_header->my_disc;
         bfd_control_header->my_disc = my_discriminator;
     
-        //  Change tx/rx intervals here based on program_info map
+        //  modify tx/rx intervals here based on program_info map
 
         struct perf_event_item event = {
             .reason = REQUEST_SESSION_POLL,
@@ -181,11 +181,61 @@ int xdp_prog(struct xdp_md *ctx) {
         __u64 flags = BPF_F_CURRENT_CPU;
         bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
 
-    } else {
+    } 
+    else if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 1 && bfd_control_header->final == 1)
+    {
+        // Lookup session
+        __u32 my_discriminator = bfd_control_header->your_disc;
+        struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
+
+        if (session_info == NULL){
+            return XDP_PASS;
+        }
+
+        // add new discriminator to session map
+        session_info->your_discriminator = bfd_control_header->my_disc;
+
+        bfd_control_header->state = STATE_INIT;
+        bfd_control_header->poll = 0;
+        bfd_control_header->cpi = 1;
+        bfd_control_header->auth_present = 0;
+        bfd_control_header->demand = 0;
+        bfd_control_header->multipoint = 0;
+        bfd_control_header->detect_multi = 0;
+        bfd_control_header->length = BFD_SIZE;
+        bfd_control_header->your_disc = bfd_control_header->my_disc;
+        bfd_control_header->my_disc = my_discriminator;
+
+        // Send perf event
+        struct perf_event_item event = {
+            .reason = RESPONSE_SESSION_PF,
+            .diagnostic = DIAG_NONE,
+            .my_discriminator = my_discriminator,
+            .your_discriminator = session_info->your_discriminator
+        };
+
+        __u64 flags = BPF_F_CURRENT_CPU;
+        bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+    }
+    else if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 0 && bfd_control_header->final == 1) {
+
+        // Look up session map
+        __u32 my_discriminator = bfd_control_header->your_disc;
+        struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
+
+        // Check that discriminators are valid
+        if (bfd_control_header->my_disc != session_info->your_discriminator) {
+            return XDP_PASS;
+        }
+   
+        // No more response packets needed 
+        return XDP_DROP;
+    }
+    else
+    {
         return XDP_PASS;
     }
 
-    // if (icmp_header->type == ICMP_ECHO) {
     __u8 src_mac[ETH_ALEN];
     __u8 dst_mac[ETH_ALEN];
     memcpy(src_mac, eth_header->h_source, ETH_ALEN);
@@ -212,6 +262,6 @@ int xdp_prog(struct xdp_md *ctx) {
 
     // TODO get iface from map program_info 
     return bpf_redirect(0, 0);
-}
+    }
 
 char _license[] SEC("license") = "GPL";
