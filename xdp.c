@@ -227,7 +227,17 @@ int xdp_prog(struct xdp_md *ctx) {
         if (bfd_control_header->my_disc != session_info->your_discriminator) {
             return XDP_PASS;
         }
-   
+
+        // Send perf event
+        struct perf_event_item event = {
+            .reason = REQUEST_SESSION_FINAL,
+            .diagnostic = DIAG_NONE,
+            .my_discriminator = my_discriminator,
+            .your_discriminator = session_info->your_discriminator};
+
+        __u64 flags = BPF_F_CURRENT_CPU;
+        bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+
         // No more response packets needed 
         return XDP_DROP;
     }
