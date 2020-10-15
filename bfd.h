@@ -1,23 +1,18 @@
+#ifndef _BFD_H
+#define _BFD_H
+
 #ifndef _LINUX_TYPES_H
 #define _LINUX_TYPES_H
 
 #include <asm-generic/int-ll64.h>
 #include <asm/types.h>
 
-#ifndef _BFD_H
-#define _BFD_H
-
-#define BFD_SIZE sizeof(struct bfd_control)
-
-// Perf event reasons
-#define REQUEST_SESSION_POLL 0
-#define REQUEST_SESSION_FINAL 1
-#define RESPONSE_SESSION_PF 2
-#define ECHO_REPLY_RECEIVED 3
+#endif  //_LINUX_TYPES_H
 
 // Echo Codes
-#define ECHO_REQUEST 0
-#define ECHO_REPLY 1
+#define ECHO_DEFAULT    0
+#define ECHO_TIMESTAMP  1
+#define ECHO_TRACE      2
 
 /* Diagnostic Codes */
 #define DIAG_NONE                       0
@@ -61,13 +56,12 @@ struct bfd_control {
 };
 
 struct bfd_echo {
-        __u8 version : 3,
-                code : 5;
-        
+        __u8    bfd_version : 3,
+                reply : 1,
+                code : 4;
         __u32 my_disc;
         __u32 your_disc;
         __u32 timestamp;
 };
 
-#endif              //_BFD_H
-#endif              //_LINUX_TYPES_H
+#endif  //_BFD_H

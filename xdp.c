@@ -1,37 +1,4 @@
-#include "bpf_helpers.h"
-#include "bfd.h"
-
-// #include <linux/bpf.h>
-#include <linux/ip.h>
-#include <linux/in.h>
-#include <linux/if_ether.h>
-#include <linux/icmp.h>
-#include <netinet/udp.h>
-
-
-#include <stddef.h>
-
-#define IP_SRC_OFF (ETH_HLEN + offsetof(struct iphdr, saddr))
-#define IP_DST_OFF (ETH_HLEN + offsetof(struct iphdr, daddr))
-
-#define BFD_MIN_PKT_SIZE (sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_control))
-
-// #define ICMP_TYPE_OFF (ETH_HLEN + sizeof(struct iphdr) + offsetof(struct icmphdr, type))
-
-// #define ICMP_PKT_SIZE sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct icmphdr)
-
-// #define ICMP_ECHO_LEN 64
-
-// struct icmphdr_t {
-//     __u8 type;
-//     __u8 code;
-//     __u16 checksum;
-//     __u16 id;
-//     __u16 sequence;
-//     __u32 orig_time;
-//     __u32 rec_time;     // Unused
-//     __u32 trans_time;   // Unused
-// };
+#include "xdp_prog.h"
 
 BPF_MAP_DEF(program_info) = {
     .map_type = BPF_MAP_TYPE_ARRAY,
@@ -48,13 +15,23 @@ BPF_MAP_DEF(session_map) = {
     .max_entries = 256,
 };
 BPF_MAP_ADD(session_map);
+
 struct bfd_session {
-    __u8 state;
-    __u32 my_discriminator;
-    __u32 your_discriminator;
+    __u8    state:2,
+            remote_state:2,
+            demand:1,
+            remote_demand:1,
+            unused:2;
+    __u8 diagnostic;
+    __u8 detect_multi;
+    __u32 local_disc;
+    __u32 remote_disc;
     __u32 min_tx;
+    __u32 remote_min_tx;
     __u32 min_rx;
+    __u32 remote_min_rx;
     __u32 echo_rx;
+    __u32 remote_echo_rx;
 };
 
 //Perf event map
@@ -66,13 +43,19 @@ BPF_MAP_ADD(perfmap);
 
 //Perf event map value
 struct perf_event_item {
-    __u16 reason;
-    __u16 diagnostic;
-    __u32 my_discriminator;
-    __u32 your_discriminator;
+    __u16 flags;
+    __u32 local_disc;
+    __u32 timestamp;
+    __u8 diagnostic;
+    __u8 new_remote_state;
+    __u32 new_remote_disc;
+    __u32 new_remote_min_tx;
+    __u32 new_remote_min_rx;
+    __u32 new_remote_echo_rx;
 };
+_Static_assert(sizeof(struct perf_event_item) == 28, "wrong size of perf_event_item");
 
-_Static_assert(sizeof(struct perf_event_item) == 12, "wrong size of perf_event_item");
+
 
 // __u16 calc_checksum_diff_u8(__u16 old_checksum, __u8 old_value, __u8 new_value, __u32 value_offset)
 // {
@@ -101,267 +84,256 @@ _Static_assert(sizeof(struct perf_event_item) == 12, "wrong size of perf_event_i
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx) {
     
-    // Set data pointers to context
+    // Get context pointers
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
-    // Verifier check for packet size 
+    // Assign ethernet header
     if (data + sizeof(struct ethhdr) > data_end)
         return XDP_PASS;
-
-
     struct ethhdr *eth_header = data;
 
-    if (eth_header->h_proto != __constant_htons(ETH_P_IP)) {
+    // Check for and assign IP header
+    if (eth_header->h_proto != __constant_htons(ETH_P_IP))
         return XDP_PASS;
-    }
-
-    // Verifier check for packet size
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr)  > data_end)
         return XDP_PASS;
-
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
 
-    // Verifier check for packet size
+    // Check for and assign UDP header
+    if (ip_header->protocol != IPPROTO_UDP)
+        return XDP_PASS;
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) > data_end)
         return XDP_PASS;
-
-    if (ip_header->protocol != IPPROTO_UDP) return XDP_PASS;
-
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
 
-    // Check destination port
-    __u32 key = 1;
+    // Check UDP destination port
+    __u32 key = PROGKEY_PORT;
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
-    
-    if (udp_header->dest != *dst_port) {
+    if (udp_header->dest != *dst_port)
         return XDP_PASS;
-    }
 
-    // Verifier check for packet size
+    ////////////////////
+    //                //
+    //    BFD ECHO    //
+    //                //
+    ////////////////////
+
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_echo) > data_end)
-        return XDP_PASS;
+        return XDP_DROP;
 
-    // Check echo packet
-    if (udp_header->len == 8+sizeof(struct bfd_echo)) {
-
+    if (udp_header->len == sizeof(struct udphdr) + sizeof(struct bfd_echo)) {
         struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
-        if (echo_packet->version != 1) {
+
+        if (echo_packet->bfd_version != 1) {
             return XDP_DROP;
         }
+        
+        // If packet is a reply to echo
+        if (echo_packet->reply) {
+            
+            __u32 my_discriminator = echo_packet->your_disc;
 
-        // Echo Logic
-        if (echo_packet->code == ECHO_REQUEST){
+            if (echo_packet->code == ECHO_TRACE) {
+                // Trace functionality
+            }
+
+            // Check that session and discriminators are valid
+            struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
+            if (session_info == NULL || echo_packet->my_disc != session_info->remote_disc) {
+                return XDP_DROP;
+            }
+
+            // Send perf event to manager
+            struct perf_event_item event = {
+                .flags = FG_RECIEVE_ECHO,
+                .local_disc = my_discriminator
+            };
+
+            if (echo_packet->code == ECHO_TIMESTAMP) {
+                event.timestamp = echo_packet->timestamp;
+            }
+
+            __u64 flags = BPF_F_CURRENT_CPU;
+            bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+
+            return XDP_DROP;
+        } 
+        else {
+
+            if (echo_packet->code == ECHO_TIMESTAMP) {
+                // Timestamp functionality
+            }
+            else if (echo_packet->code == ECHO_TRACE) {
+                // Trace functionality
+            }
 
             // Flip discriminators
             __u32 temp_disc = echo_packet->my_disc;
             echo_packet->my_disc = echo_packet->your_disc;
             echo_packet->your_disc = temp_disc;
 
-            // Update echo packet code
-            echo_packet->code = ECHO_REPLY;
+            // Update echo packet reply flag
+            echo_packet->reply = 1;
 
-            __u8 src_mac[ETH_ALEN];
-            __u8 dst_mac[ETH_ALEN];
-            memcpy(src_mac, eth_header->h_source, ETH_ALEN);
-            memcpy(dst_mac, eth_header->h_dest, ETH_ALEN);
+            // Swap MAC addresses
+            __u8 temp_mac[ETH_ALEN];
+            memcpy(temp_mac, eth_header->h_source, ETH_ALEN);
+            memcpy(eth_header->h_source, eth_header->h_dest, ETH_ALEN);
+            memcpy(eth_header->h_dest, temp_mac, ETH_ALEN);
 
-            //Swap MAC addresses
-            memcpy(eth_header->h_dest, src_mac, ETH_ALEN);
-            memcpy(eth_header->h_source, dst_mac, ETH_ALEN);
-
-            //Get IP addresses
-            __u32 src_ip = ip_header->saddr;
-            __u32 dst_ip = ip_header->daddr;
-
-            // //Swap IP addresses
-            ip_header->saddr = dst_ip;
-            ip_header->daddr = src_ip;
+            // Swap IP addresses
+            __u32 temp_ip = ip_header->daddr;
+            ip_header->daddr = ip_header->saddr;
+            ip_header->saddr = temp_ip;
 
             // Swap udp ports
-            __u16 src_port = udp_header->uh_sport;
-            __u16 dst_port = udp_header->uh_dport;
+            __u16 temp_port = udp_header->uh_sport;
+            udp_header->uh_sport = udp_header->uh_dport;
+            udp_header->uh_dport = temp_port;
 
-            udp_header->uh_sport = dst_port;
-            udp_header->uh_dport = src_port;
-
-            // TODO get iface from map program_info
-            return bpf_redirect(0, 0);
-        }
-        else if (echo_packet->code == ECHO_REPLY){
-
-            __u32 my_discriminator = echo_packet->your_disc;
-            struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
-
-            // Check that discriminators are valid and that session map is valid
-            if (session_info == NULL || echo_packet->my_disc != session_info->your_discriminator)
-            {
-                return XDP_PASS;
-            }
-
-            struct perf_event_item event = {
-                .reason = ECHO_REPLY_RECEIVED,
-                .diagnostic = DIAG_NONE,
-                .my_discriminator = my_discriminator,
-                .your_discriminator = session_info->your_discriminator};
-
-            __u64 flags = BPF_F_CURRENT_CPU;
-            bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
-
-            return XDP_DROP;
+            // Redirect packet
+            __u32 key = PROGKEY_IFINDEX;
+            __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
+            return bpf_redirect(*ifindex, 0);
         }
     }
 
-    // Verifier check for packet size
+    ///////////////////////
+    //                   //
+    //    BFD CONTROL    //
+    //                   //
+    ///////////////////////
+
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_control) > data_end)
         return XDP_PASS;
 
-    struct bfd_control *bfd_control_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
+    if (udp_header->len == sizeof(struct udphdr) + sizeof(struct bfd_control)) {
+        struct bfd_control *control_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
 
-    // Check that there actually is a BFD packet
-    if (bfd_control_header->version != 1 || bfd_control_header->length != BFD_SIZE)
-        return XDP_PASS;
 
-    // generate timestamp
-    __u64 rec_time = bpf_ktime_get_ns();
+        // Check BFD version
+        if (control_packet->version != 1)
+            return XDP_DROP;
 
-    // Check for request to start session
-    if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 1 && bfd_control_header->final == 0){
-        
-        // Generate discriminator
-        __u32 my_discriminator = bpf_get_prandom_u32();
-
-        struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
-        if (session_info != NULL){
-           my_discriminator = bpf_get_prandom_u32();
-        }
-        
-        // create new session map
-        struct bfd_session new_session = {
-            .state = STATE_INIT,
-            .my_discriminator = my_discriminator,
-            .your_discriminator = bfd_control_header->my_disc,
-            .min_rx = bfd_control_header->required_rx,
-            .min_tx = bfd_control_header->desired_tx,
-            .echo_rx = bfd_control_header->required_echo_rx
-        };
-        
-        *session_info = new_session;
-
-        bfd_control_header->state = STATE_INIT;    
-        bfd_control_header->final = 1;
-        bfd_control_header->cpi = 1;
-        bfd_control_header->auth_present = 0;
-        bfd_control_header->demand = 0;
-        bfd_control_header->multipoint = 0;
-        bfd_control_header->detect_multi = 0;
-        bfd_control_header->length = BFD_SIZE;
-        bfd_control_header->your_disc = bfd_control_header->my_disc;
-        bfd_control_header->my_disc = my_discriminator;
-    
-        //  modify tx/rx intervals here based on program_info map
-
-        struct perf_event_item event = {
-            .reason = REQUEST_SESSION_POLL,
-            .diagnostic = DIAG_NONE,
-            .my_discriminator = my_discriminator,
-            .your_discriminator = session_info->your_discriminator
-        };
-        
-        __u64 flags = BPF_F_CURRENT_CPU;
-        bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
-
-    } 
-    else if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 1 && bfd_control_header->final == 1)
-    {
-        // Lookup session
-        __u32 my_discriminator = bfd_control_header->your_disc;
-        struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
-
-        if (session_info == NULL){
-            return XDP_PASS;
+        // Check length field
+        if (control_packet->auth_present) {
+            return XDP_DROP;
+        } else {
+            if (control_packet->length != sizeof(struct bfd_control))
+                return XDP_DROP;
         }
 
-        // add new discriminator to session map
-        session_info->your_discriminator = bfd_control_header->my_disc;
+        // Check actual packet size
+        if (data_end - (void *)control_packet != control_packet->length)
+            return XDP_DROP;
 
-        bfd_control_header->state = STATE_INIT;
-        bfd_control_header->poll = 0;
-        bfd_control_header->cpi = 1;
-        bfd_control_header->auth_present = 0;
-        bfd_control_header->demand = 0;
-        bfd_control_header->multipoint = 0;
-        bfd_control_header->detect_multi = 0;
-        bfd_control_header->length = BFD_SIZE;
-        bfd_control_header->your_disc = bfd_control_header->my_disc;
-        bfd_control_header->my_disc = my_discriminator;
+        // Check various fields
+        if (!control_packet->detect_multi || control_packet->multipoint || !control_packet->my_disc)
+            return XDP_DROP;
 
-        // Send perf event
-        struct perf_event_item event = {
-            .reason = RESPONSE_SESSION_PF,
-            .diagnostic = DIAG_NONE,
-            .my_discriminator = my_discriminator,
-            .your_discriminator = session_info->your_discriminator
-        };
+        // If our disc is not set without wishing to create session
+        if (!control_packet->your_disc && control_packet->state != STATE_DOWN && control_packet->diagnostic != DIAG_NONE && !control_packet->poll)
+            return XDP_DROP;
 
-        __u64 flags = BPF_F_CURRENT_CPU;
-        bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
-    }
-    else if (bfd_control_header->state == STATE_INIT && bfd_control_header->diagnostic == DIAG_NONE && bfd_control_header->poll == 0 && bfd_control_header->final == 1) {
 
-        // Look up session map
-        __u32 my_discriminator = bfd_control_header->your_disc;
-        struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
 
-        // Check that discriminators are valid
-        if (bfd_control_header->my_disc != session_info->your_discriminator) {
-            return XDP_PASS;
+        struct perf_event_item event = {};
+
+        //If packet requires a response
+        if (control_packet->poll) {
+
+            // Check for active request to create a session
+            if (!control_packet->my_disc) {
+                // Generate discriminator
+                __u32 my_discriminator = bpf_get_prandom_u32();
+
+                // Set perf event fields
+                event.flags = FG_CREATE_SESSION;
+                event.local_disc = my_discriminator;
+                event.new_remote_state = STATE_DOWN;
+                event.diagnostic = control_packet->diagnostic,
+                event.new_remote_disc = control_packet->my_disc;
+                event.new_remote_echo_rx = control_packet->required_echo_rx;
+                event.new_remote_min_rx = control_packet->required_rx;
+                event.new_remote_min_tx = control_packet->desired_tx;
+
+                // Send perf event
+                __u64 flags = BPF_F_CURRENT_CPU;
+                bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+                
+                // Mangle packet for response
+                control_packet->state = STATE_INIT;
+                control_packet->final = 1;
+                control_packet->poll = 0;
+                control_packet->cpi = 1;
+                control_packet->auth_present = 0;
+                control_packet->demand = 0;
+                control_packet->multipoint = 0;
+                control_packet->diagnostic = DIAG_NONE;
+                __u32 key = PROGKEY_DETECT_MULTI;
+                control_packet->detect_multi = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                control_packet->length = sizeof(struct bfd_control);
+                control_packet->your_disc = control_packet->my_disc;
+                control_packet->my_disc = my_discriminator;
+                __u32 key = PROGKEY_MIN_TX;
+                control_packet->desired_tx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                __u32 key = PROGKEY_MIN_RX;
+                control_packet->required_rx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                __u32 key = PROGKEY_MIN_ECHO_RX;
+                control_packet->required_echo_rx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+            } 
+            else { 
+                
+                // Find what changed and report to manager
+
+            }
+            
+            // Flip discriminators
+            __u32 temp_disc = control_packet->my_disc;
+            control_packet->my_disc = control_packet->your_disc;
+            control_packet->your_disc = temp_disc;
+
+            // Swap MAC addresses
+            __u8 temp_mac[ETH_ALEN];
+            memcpy(temp_mac, eth_header->h_source, ETH_ALEN);
+            memcpy(eth_header->h_source, eth_header->h_dest, ETH_ALEN);
+            memcpy(eth_header->h_dest, temp_mac, ETH_ALEN);
+
+            // Swap IP addresses
+            __u32 temp_ip = ip_header->daddr;
+            ip_header->daddr = ip_header->saddr;
+            ip_header->saddr = temp_ip;
+
+            // Swap udp ports
+            __u16 temp_port = udp_header->uh_sport;
+            udp_header->uh_sport = udp_header->uh_dport;
+            udp_header->uh_dport = temp_port;
+
+            // Redirect packet
+            __u32 key = PROGKEY_IFINDEX;
+            __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
+            return bpf_redirect(*ifindex, 0);
         }
+        else if (control_packet->final = 1) {
 
-        // Send perf event
-        struct perf_event_item event = {
-            .reason = REQUEST_SESSION_FINAL,
-            .diagnostic = DIAG_NONE,
-            .my_discriminator = my_discriminator,
-            .your_discriminator = session_info->your_discriminator};
+            // Set perf event fields
+            event.flags = FG_RECIEVE_FINAL;
+            event.local_disc = control_packet->your_disc;
 
-        __u64 flags = BPF_F_CURRENT_CPU;
-        bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+            // Send perf event
+            __u64 flags = BPF_F_CURRENT_CPU;
+            bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+                
+            return XDP_DROP;
+        }
+        else {
 
-        // No more response packets needed 
-        return XDP_DROP;
+            // Asynchronus mode BFD control packet response
+        }
     }
-    else
-    {
-        return XDP_PASS;
-    }
 
-    __u8 src_mac[ETH_ALEN];
-    __u8 dst_mac[ETH_ALEN];
-    memcpy(src_mac, eth_header->h_source, ETH_ALEN);
-    memcpy(dst_mac, eth_header->h_dest, ETH_ALEN);
-
-    //Swap MAC addresses
-    memcpy(eth_header->h_dest, src_mac, ETH_ALEN);
-    memcpy(eth_header->h_source, dst_mac, ETH_ALEN);
-
-    //Get IP addresses
-    __u32 src_ip = ip_header->saddr;
-    __u32 dst_ip = ip_header->daddr;
-
-    // //Swap IP addresses
-    ip_header->saddr = dst_ip;
-    ip_header->daddr = src_ip;
-
-    // Swap udp ports
-    __u16 src_port = udp_header->uh_sport;
-    __u16 dst_port = udp_header->uh_dport;
-
-    udp_header->uh_sport = dst_port;
-    udp_header->uh_dport = src_port;
-
-    // TODO get iface from map program_info 
-    return bpf_redirect(0, 0);
-    }
+    return XDP_DROP;
+}
 
 char _license[] SEC("license") = "GPL";
