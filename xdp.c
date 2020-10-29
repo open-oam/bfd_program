@@ -276,11 +276,11 @@ int xdp_prog(struct xdp_md *ctx) {
                 control_packet->length = sizeof(struct bfd_control);
                 control_packet->your_disc = control_packet->my_disc;
                 control_packet->my_disc = my_discriminator;
-                __u32 key = PROGKEY_MIN_TX;
+                key = PROGKEY_MIN_TX;
                 control_packet->desired_tx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
-                __u32 key = PROGKEY_MIN_RX;
+                key = PROGKEY_MIN_RX;
                 control_packet->required_rx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
-                __u32 key = PROGKEY_MIN_ECHO_RX;
+                key = PROGKEY_MIN_ECHO_RX;
                 control_packet->required_echo_rx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
             } 
             else { 
@@ -315,7 +315,7 @@ int xdp_prog(struct xdp_md *ctx) {
             __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
             return bpf_redirect(*ifindex, 0);
         }
-        else if (control_packet->final = 1) {
+        else if (control_packet->final == 1) {
 
             // Set perf event fields
             event.flags = FG_RECIEVE_FINAL;
