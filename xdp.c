@@ -246,7 +246,7 @@ int xdp_prog(struct xdp_md *ctx) {
         if (control_packet->poll) {
 
             // Check for active request to create a session
-            if (!control_packet->my_disc) {
+            if (!control_packet->your_disc) {
                 // Generate discriminator
                 __u32 my_discriminator = bpf_get_prandom_u32();
 
@@ -288,9 +288,58 @@ int xdp_prog(struct xdp_md *ctx) {
             else { 
                 
                 // Find what changed and report to manager
+                __u32 key = control_packet->your_disc;
+                struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
+                
+                if (current_session == NULL) return XDP_DROP;
+
+                event.flags = 0;
+                event.diagnostic = control_packet->diagnostic;
+                event.local_disc = control_packet->your_disc;
+
+                if (control_packet->state != current_session->remote_state){
+                    event.new_remote_state = control_packet->state;
+                    event.flags = event.flags | FG_CHANGED_STATE;
+                }
+                if (control_packet->my_disc != current_session->remote_disc){
+                    event.new_remote_disc = control_packet->my_disc;
+                    event.flags = event.flags | FG_CHANGED_DISC;
+                }
+                if (control_packet->desired_tx != current_session->remote_min_tx)
+                {
+                    event.new_remote_min_tx = control_packet->desired_tx;
+                    event.flags = event.flags | FG_CHANGED_TIMING;
+                }
+                if (control_packet->required_rx != current_session->remote_min_rx)
+                {
+                    event.new_remote_min_rx = control_packet->required_rx;
+                    event.flags = event.flags | FG_CHANGED_TIMING;
+                }
+                if (control_packet->required_echo_rx != current_session->remote_echo_rx)
+                {
+                    event.new_remote_echo_rx = control_packet->required_echo_rx;
+                    event.flags = event.flags | FG_CHANGED_TIMING;
+                }
+        
+                __u64 flags = BPF_F_CURRENT_CPU;
+                bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
+
+                control_packet->diagnostic = current_session->diagnostic;
+                control_packet->state = current_session->state;
+                control_packet->poll = 0;
+                control_packet->final = 1;
+                control_packet->cpi = 1;
+                control_packet->auth_present = 0;
+                control_packet->demand = current_session->demand;
+                control_packet->multipoint = 0;
+                control_packet->detect_multi = current_session->detect_multi;
+                control_packet->length = sizeof(struct bfd_control);
+                control_packet->desired_tx = current_session->min_tx;
+                control_packet->required_rx = current_session->min_rx;
+                control_packet->required_echo_rx = current_session->echo_rx;
 
             }
-            
+
             // Flip discriminators
             __u32 temp_disc = control_packet->my_disc;
             control_packet->my_disc = control_packet->your_disc;
@@ -330,8 +379,56 @@ int xdp_prog(struct xdp_md *ctx) {
             return XDP_DROP;
         }
         else {
+            __u32 key = control_packet->your_disc;
+            struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
+            
+            event.flags = FG_RECIEVE_CONTROL;
+            event.local_disc = control_packet->your_disc;
+            event.diagnostic = control_packet->diagnostic;
+
+            __u64 flags = BPF_F_CURRENT_CPU;
+            bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
 
             // Asynchronus mode BFD control packet response
+            control_packet->diagnostic = current_session->diagnostic;
+            control_packet->state = current_session->state;
+            control_packet->poll = 0;
+            control_packet->final = 0;
+            control_packet->cpi = 1;
+            control_packet->auth_present = 0;
+            control_packet->demand = current_session->demand;
+            control_packet->multipoint = 0;
+            control_packet->detect_multi = current_session->detect_multi;
+            control_packet->length = sizeof(struct bfd_control);
+            control_packet->desired_tx = current_session->min_tx;
+            control_packet->required_rx = current_session->min_rx;
+            control_packet->required_echo_rx = current_session->echo_rx;
+
+            // Flip discriminators
+            __u32 temp_disc = control_packet->my_disc;
+            control_packet->my_disc = control_packet->your_disc;
+            control_packet->your_disc = temp_disc;
+
+            // Swap MAC addresses
+            __u8 temp_mac[ETH_ALEN];
+            memcpy(temp_mac, eth_header->h_source, ETH_ALEN);
+            memcpy(eth_header->h_source, eth_header->h_dest, ETH_ALEN);
+            memcpy(eth_header->h_dest, temp_mac, ETH_ALEN);
+
+            // Swap IP addresses
+            __u32 temp_ip = ip_header->daddr;
+            ip_header->daddr = ip_header->saddr;
+            ip_header->saddr = temp_ip;
+
+            // Swap udp ports
+            __u16 temp_port = udp_header->uh_sport;
+            udp_header->uh_sport = udp_header->uh_dport;
+            udp_header->uh_dport = temp_port;
+
+            // Redirect packet
+            key = PROGKEY_IFINDEX;
+            __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
+            return bpf_redirect(*ifindex, 0);
         }
     }
 
