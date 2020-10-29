@@ -8,20 +8,13 @@ BPF_MAP_DEF(program_info) = {
 };
 BPF_MAP_ADD(program_info);
 
-BPF_MAP_DEF(session_map) = {
-    .map_type = BPF_MAP_TYPE_ARRAY,
-    .key_size = sizeof(__u32),
-    .value_size = sizeof(struct bfd_session),
-    .max_entries = 256,
-};
-BPF_MAP_ADD(session_map);
-
-struct bfd_session {
-    __u8    state:2,
-            remote_state:2,
-            demand:1,
-            remote_demand:1,
-            unused:2;
+struct bfd_session
+{
+    __u8 state : 2,
+        remote_state : 2,
+        demand : 1,
+        remote_demand : 1,
+        unused : 2;
     __u8 diagnostic;
     __u8 detect_multi;
     __u32 local_disc;
@@ -33,6 +26,15 @@ struct bfd_session {
     __u32 echo_rx;
     __u32 remote_echo_rx;
 };
+
+BPF_MAP_DEF(session_map) = {
+    .map_type = BPF_MAP_TYPE_ARRAY,
+    .key_size = sizeof(__u32),
+    .value_size = sizeof(struct bfd_session),
+    .max_entries = 256,
+};
+BPF_MAP_ADD(session_map);
+
 
 //Perf event map
 BPF_MAP_DEF(perfmap) = {
@@ -53,7 +55,7 @@ struct perf_event_item {
     __u32 new_remote_min_rx;
     __u32 new_remote_echo_rx;
 };
-_Static_assert(sizeof(struct perf_event_item) == 28, "wrong size of perf_event_item");
+_Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_item");
 
 
 
