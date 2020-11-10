@@ -112,6 +112,8 @@ int xdp_prog(struct xdp_md *ctx) {
     // Check UDP destination port
     __u32 key = PROGKEY_PORT;
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
+    if (dst_port == NULL)
+        return XDP_ABORTED;
     if (udp_header->dest != *dst_port)
         return XDP_PASS;
 
@@ -142,7 +144,9 @@ int xdp_prog(struct xdp_md *ctx) {
 
             // Check that session and discriminators are valid
             struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
-            if (session_info == NULL || echo_packet->my_disc != session_info->remote_disc) {
+            if (session_info == NULL)
+                return XDP_ABORTED;
+            if (echo_packet->my_disc != session_info->remote_disc) {
                 return XDP_DROP;
             }
 
@@ -198,6 +202,8 @@ int xdp_prog(struct xdp_md *ctx) {
             // Redirect packet
             __u32 key = PROGKEY_IFINDEX;
             __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
+            if (ifindex == NULL)
+                return XDP_ABORTED;
             return bpf_redirect(*ifindex, 0);
         }
     }
@@ -277,22 +283,36 @@ int xdp_prog(struct xdp_md *ctx) {
                 control_packet->multipoint = 0;
                 control_packet->diagnostic = DIAG_NONE;
                 __u32 key = PROGKEY_DETECT_MULTI;
-                control_packet->detect_multi = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                __u32 *value = bpf_map_lookup_elem(&program_info, &key);
+                if (value == NULL)
+                    return XDP_ABORTED;
+                control_packet->detect_multi = *(__u32 *)value;
                 control_packet->length = sizeof(struct bfd_control);
                 control_packet->your_disc = control_packet->my_disc;
                 control_packet->my_disc = my_discriminator;
                 key = PROGKEY_MIN_TX;
-                control_packet->desired_tx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                value = bpf_map_lookup_elem(&program_info, &key);
+                if (value == NULL)
+                    return XDP_ABORTED;
+                control_packet->desired_tx = *(__u32 *)value;
                 key = PROGKEY_MIN_RX;
-                control_packet->required_rx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                value = bpf_map_lookup_elem(&program_info, &key);
+                if (value == NULL)
+                    return XDP_ABORTED;
+                control_packet->required_rx = *(__u32 *)value;
                 key = PROGKEY_MIN_ECHO_RX;
-                control_packet->required_echo_rx = *(__u32 *)bpf_map_lookup_elem(&program_info, &key);
+                value = bpf_map_lookup_elem(&program_info, &key);
+                if (value == NULL)
+                    return XDP_ABORTED;
+                control_packet->required_echo_rx = *(__u32 *)value;
             } 
             else { 
                 
                 // Find what changed and report to manager
                 __u32 key = control_packet->your_disc;
                 struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
+                if (current_session == NULL)
+                    return XDP_ABORTED;
                 
                 if (current_session == NULL) return XDP_DROP;
 
@@ -367,6 +387,8 @@ int xdp_prog(struct xdp_md *ctx) {
             // Redirect packet
             __u32 key = PROGKEY_IFINDEX;
             __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
+            if (ifindex == NULL)
+                return XDP_ABORTED;
             return bpf_redirect(*ifindex, 0);
         }
         else if (control_packet->final == 1) {
@@ -384,6 +406,8 @@ int xdp_prog(struct xdp_md *ctx) {
         else {
             __u32 key = control_packet->your_disc;
             struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
+            if (current_session == NULL)
+                return XDP_ABORTED;
             
             event.flags = FG_RECIEVE_CONTROL;
             event.local_disc = control_packet->your_disc;
@@ -431,6 +455,8 @@ int xdp_prog(struct xdp_md *ctx) {
             // Redirect packet
             key = PROGKEY_IFINDEX;
             __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
+            if (ifindex == NULL)
+                return XDP_ABORTED;
             return bpf_redirect(*ifindex, 0);
         }
     }
