@@ -8,8 +8,7 @@ BPF_MAP_DEF(program_info) = {
 };
 BPF_MAP_ADD(program_info);
 
-struct bfd_session
-{
+struct bfd_session {
     __u8 state : 2,
         remote_state : 2,
         demand : 1,
@@ -45,11 +44,12 @@ BPF_MAP_ADD(perfmap);
 
 //Perf event map value
 struct perf_event_item {
-    __u16 flags;
-    __u32 local_disc;
-    __u32 timestamp;
     __u8 diagnostic;
     __u8 new_remote_state;
+    __u16 flags;
+    __u32 local_disc;
+    __u32 src_ip;
+    __u32 timestamp;
     __u32 new_remote_disc;
     __u32 new_remote_min_tx;
     __u32 new_remote_min_rx;
@@ -149,7 +149,8 @@ int xdp_prog(struct xdp_md *ctx) {
             // Send perf event to manager
             struct perf_event_item event = {
                 .flags = FG_RECIEVE_ECHO,
-                .local_disc = my_discriminator
+                .local_disc = my_discriminator,
+                .src_ip = ip_header->saddr
             };
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
@@ -240,7 +241,9 @@ int xdp_prog(struct xdp_md *ctx) {
 
 
 
-        struct perf_event_item event = {};
+        struct perf_event_item event = {
+            .src_ip = ip_header->saddr
+        };
 
         //If packet requires a response
         if (control_packet->poll) {
