@@ -283,6 +283,7 @@ int xdp_prog(struct xdp_md *ctx) {
             if (!control_packet->your_disc) {
                 // Generate discriminator
                 __u32 my_discriminator = bpf_get_prandom_u32();
+                bpf_printk("Random disc: %i\n", my_discriminator);
 
                 // Set perf event fields
                 event.flags = FG_CREATE_SESSION;
