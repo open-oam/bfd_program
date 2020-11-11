@@ -230,17 +230,9 @@ int xdp_prog(struct xdp_md *ctx) {
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_control))) {
         struct bfd_control *control_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
 
-
-        bpf_printk("BFD Control packet found\n");
-        __u8 version_byte = control_packet->version << 5 | control_packet->diagnostic;
-        bpf_printk("Version: %i\n", version_byte);
-
-
         // Check BFD version
         if (control_packet->version != 1)
             return XDP_DROP;
-
-        bpf_printk("version\n");
 
         // Check length field
         if (control_packet->auth_present) {
@@ -250,29 +242,27 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_DROP;
         }
 
-        bpf_printk("authentication\n");
-
         // Check actual packet size
         if (data_end - (void *)control_packet != control_packet->length)
             return XDP_DROP;
-
-        bpf_printk("length\n");
 
         // Check various fields
         if (!control_packet->detect_multi || control_packet->multipoint || !control_packet->my_disc)
             return XDP_DROP;
 
-        bpf_printk("various fields");
-
         // If our disc is not set without wishing to create session
         if (!control_packet->your_disc && control_packet->state != STATE_DOWN && control_packet->diagnostic != DIAG_NONE && !control_packet->poll)
             return XDP_DROP;
 
-        bpf_printk("specific create session thing");
-
         struct perf_event_item event = {
             .src_ip = ip_header->saddr
         };
+
+        __u8 flag_byte = control_packet->multipoint << 7 | control_packet->demand << 6 | control_packet->auth_present << 5
+                        | control_packet->cpi << 4 | control_packet->final << 3 | control_packet->poll << 2 | control_packet->state;
+
+        bpf_printk("%x\n", flag_byte);
+
 
         //If packet requires a response
         if (control_packet->poll) {
