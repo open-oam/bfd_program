@@ -290,10 +290,10 @@ int xdp_prog(struct xdp_md *ctx) {
                 event.local_disc = my_discriminator;
                 event.new_remote_state = STATE_DOWN;
                 event.diagnostic = control_packet->diagnostic,
-                event.new_remote_disc = ___constant_swab64(control_packet->my_disc);
-                event.new_remote_echo_rx = ___constant_swab64(control_packet->required_echo_rx);
-                event.new_remote_min_rx = ___constant_swab64(control_packet->required_rx);
-                event.new_remote_min_tx = ___constant_swab64(control_packet->desired_tx);
+                event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
+                event.new_remote_echo_rx = ___constant_swab32(control_packet->required_echo_rx);
+                event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
+                event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
 
                 bpf_printk("Create session perf event\n");
 
@@ -316,29 +316,29 @@ int xdp_prog(struct xdp_md *ctx) {
                     return XDP_ABORTED;
                 control_packet->detect_multi = *(__u32 *)value;
                 control_packet->length = sizeof(struct bfd_control);
-                control_packet->your_disc = ___constant_swab64(my_discriminator);
+                control_packet->your_disc = ___constant_swab32(my_discriminator);
                 key = PROGKEY_MIN_TX;
                 value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
                     return XDP_ABORTED;
-                control_packet->desired_tx = ___constant_swab64(*(__u32 *)value);
+                control_packet->desired_tx = ___constant_swab32(*(__u32 *)value);
                 key = PROGKEY_MIN_RX;
                 value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
                     return XDP_ABORTED;
-                control_packet->required_rx = ___constant_swab64(*(__u32 *)value);
+                control_packet->required_rx = ___constant_swab32(*(__u32 *)value);
                 key = PROGKEY_MIN_ECHO_RX;
                 value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
                     return XDP_ABORTED;
-                control_packet->required_echo_rx = ___constant_swab64(*(__u32 *)value);
+                control_packet->required_echo_rx = ___constant_swab32(*(__u32 *)value);
             } 
             else { 
                 
                 bpf_printk("poll perf sending\n");
 
                 // Find what changed and report to manager
-                __u32 key = ___constant_swab64(control_packet->your_disc);
+                __u32 key = ___constant_swab32(control_packet->your_disc);
                 struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
                 if (current_session == NULL)
                     return XDP_ABORTED;
@@ -347,26 +347,26 @@ int xdp_prog(struct xdp_md *ctx) {
 
                 event.flags = 0;
                 event.diagnostic = control_packet->diagnostic;
-                event.local_disc = ___constant_swab64(control_packet->your_disc);
+                event.local_disc = ___constant_swab32(control_packet->your_disc);
 
                 if (control_packet->state != current_session->remote_state){
                     event.new_remote_state = control_packet->state;
                     event.flags = event.flags | FG_CHANGED_STATE;
                 }
-                if (control_packet->my_disc != ___constant_swab64(current_session->remote_disc)){
-                    event.new_remote_disc = ___constant_swab64(control_packet->my_disc);
+                if (control_packet->my_disc != ___constant_swab32(current_session->remote_disc)){
+                    event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
                     event.flags = event.flags | FG_CHANGED_DISC;
                 }
-                if (control_packet->desired_tx != ___constant_swab64(current_session->remote_min_tx)) {
-                    event.new_remote_min_tx = ___constant_swab64(control_packet->desired_tx);
+                if (control_packet->desired_tx != ___constant_swab32(current_session->remote_min_tx)) {
+                    event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
                     event.flags = event.flags | FG_CHANGED_TIMING;
                 }
-                if (control_packet->required_rx != ___constant_swab64(current_session->remote_min_rx)) {
-                    event.new_remote_min_rx = ___constant_swab64(control_packet->required_rx);
+                if (control_packet->required_rx != ___constant_swab32(current_session->remote_min_rx)) {
+                    event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
                     event.flags = event.flags | FG_CHANGED_TIMING;
                 }
-                if (control_packet->required_echo_rx != ___constant_swab64(current_session->remote_echo_rx)) {
-                    event.new_remote_echo_rx = ___constant_swab64(control_packet->required_echo_rx);
+                if (control_packet->required_echo_rx != ___constant_swab32(current_session->remote_echo_rx)) {
+                    event.new_remote_echo_rx = ___constant_swab32(control_packet->required_echo_rx);
                     event.flags = event.flags | FG_CHANGED_TIMING;
                 }
         
@@ -383,9 +383,9 @@ int xdp_prog(struct xdp_md *ctx) {
                 control_packet->multipoint = 0;
                 control_packet->detect_multi = current_session->detect_multi;
                 control_packet->length = sizeof(struct bfd_control);
-                control_packet->desired_tx = ___constant_swab64(current_session->min_tx);
-                control_packet->required_rx = ___constant_swab64(current_session->min_rx);
-                control_packet->required_echo_rx = ___constant_swab64(current_session->echo_rx);
+                control_packet->desired_tx = ___constant_swab32(current_session->min_tx);
+                control_packet->required_rx = ___constant_swab32(current_session->min_rx);
+                control_packet->required_echo_rx = ___constant_swab32(current_session->echo_rx);
 
             }
 
@@ -425,7 +425,7 @@ int xdp_prog(struct xdp_md *ctx) {
 
             // Set perf event fields
             event.flags = FG_RECIEVE_FINAL;
-            event.local_disc = ___constant_swab64(control_packet->your_disc);
+            event.local_disc = ___constant_swab32(control_packet->your_disc);
 
             // Send perf event
             __u64 flags = BPF_F_CURRENT_CPU;
@@ -443,7 +443,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_ABORTED;
             
             event.flags = FG_RECIEVE_CONTROL;
-            event.local_disc = ___constant_swab64(control_packet->your_disc);
+            event.local_disc = ___constant_swab32(control_packet->your_disc);
             event.diagnostic = control_packet->diagnostic;
 
             bpf_printk("async perf event\n");
@@ -462,9 +462,9 @@ int xdp_prog(struct xdp_md *ctx) {
             control_packet->multipoint = 0;
             control_packet->detect_multi = current_session->detect_multi;
             control_packet->length = sizeof(struct bfd_control);
-            control_packet->desired_tx = ___constant_swab64(current_session->min_tx);
-            control_packet->required_rx = ___constant_swab64(current_session->min_rx);
-            control_packet->required_echo_rx = ___constant_swab64(current_session->echo_rx);
+            control_packet->desired_tx = ___constant_swab32(current_session->min_tx);
+            control_packet->required_rx = ___constant_swab32(current_session->min_rx);
+            control_packet->required_echo_rx = ___constant_swab32(current_session->echo_rx);
 
             // Flip discriminators
             __u32 temp_disc = control_packet->my_disc;
