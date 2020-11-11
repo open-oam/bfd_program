@@ -85,10 +85,14 @@ _Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_i
 
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx) {
+
+    bpf_printk("Packet recieved");
     
     // Get context pointers
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
+
+    bpf_printk("Pointers assigned");
 
     // Assign ethernet header
     if (data + sizeof(struct ethhdr) > data_end)
