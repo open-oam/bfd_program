@@ -113,7 +113,7 @@ int xdp_prog(struct xdp_md *ctx) {
     bpf_printk("IP header correct\n");
 
     int udp_protocol = ip_header->protocol;
-    bpf_printk("Protocol: %i\n");
+    bpf_printk("Protocol: %hhu\n", udp_protocol);
 
     // Check for and assign UDP header
     if (ip_header->protocol != IPPROTO_UDP)
@@ -135,7 +135,10 @@ int xdp_prog(struct xdp_md *ctx) {
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
     if (dst_port == NULL)
         return XDP_ABORTED;
-    bpf_printk("Port: %i\n", *dst_port);
+    bpf_printk("Wanted Port: %i\n", *dst_port);
+    int udp_port = udp_header->dest;
+    bpf_printk("Actual port: %i", udp_port);
+
     if (udp_header->dest != *dst_port)
         return XDP_PASS;
 
