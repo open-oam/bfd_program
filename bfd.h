@@ -35,6 +35,18 @@
 
 
 struct bfd_control {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+    __u8    diagnostic:5,
+            version:3;
+
+    __u8    multipoint:1,
+            demand:1,
+            auth_present:1,
+            cpi:1,
+            final:1,
+            poll:1,
+            state:2;
+#elif defined(__BIG_ENDIAN_BITFIELD)
     __u8    version:3,
             diagnostic:5;
 
@@ -45,7 +57,7 @@ struct bfd_control {
             auth_present:1,
             demand:1,
             multipoint:1;
-
+#endif
     __u8 detect_multi;
     __u8 length;
     __u32 my_disc;
@@ -56,9 +68,15 @@ struct bfd_control {
 };
 
 struct bfd_echo {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+        __u8    code : 4,
+                reply : 1,
+                bfd_version : 3;
+#elif defined(__BIG_ENDIAN_BITFIELD)
         __u8    bfd_version : 3,
                 reply : 1,
                 code : 4;
+#endif
         __u32 my_disc;
         __u32 your_disc;
         __u32 timestamp;

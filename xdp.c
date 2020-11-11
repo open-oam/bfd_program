@@ -86,22 +86,15 @@ _Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_i
 // }
 
 SEC("xdp")
-int xdp_prog(struct xdp_md *ctx) {
-
-    bpf_printk("Packet recieved\n");
-    
+int xdp_prog(struct xdp_md *ctx) {    
     // Get context pointers
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
-
-    bpf_printk("Pointers assigned\n");
 
     // Assign ethernet header
     if (data + sizeof(struct ethhdr) > data_end)
         return XDP_PASS;
     struct ethhdr *eth_header = data;
-
-    bpf_printk("ETH header correct\n");
 
     // Check for and assign IP header
     if (eth_header->h_proto != __constant_htons(ETH_P_IP))
@@ -110,41 +103,23 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
 
-    bpf_printk("IP header correct\n");
-
-    int udp_protocol = ip_header->protocol;
-    bpf_printk("Protocol: %hhu\n", udp_protocol);
-
     // Check for and assign UDP header
     if (ip_header->protocol != IPPROTO_UDP)
         return XDP_PASS;
     
-    bpf_printk("IP type is UDP\n");
-
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) > data_end)
         return XDP_PASS;
 
-    bpf_printk("UDP Size is fine for verifier\n");
-
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
-
-    int udp_port = udp_header->dest;
-    bpf_printk("Actual port: %i", udp_port);
-    bpf_printk("UDP header correct\n");
 
     // Check UDP destination port
     __u32 key = PROGKEY_PORT;
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
     if (dst_port == NULL)
         return XDP_ABORTED;
-    bpf_printk("Wanted Port: %i\n", *dst_port);
-    
-    
 
-    if (udp_header->dest != *dst_port)
+    if (udp_header->dest != ___constant_swab16(*dst_port))
         return XDP_PASS;
-
-    bpf_printk("BFD getting through\n");
 
     ////////////////////
     //                //
@@ -155,8 +130,10 @@ int xdp_prog(struct xdp_md *ctx) {
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_echo) > data_end)
         return XDP_DROP;
 
-    if (udp_header->len == sizeof(struct udphdr) + sizeof(struct bfd_echo)) {
+    if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_echo))) {
         struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
+
+        bpf_printk("Echo packet found\n");
 
         if (echo_packet->bfd_version != 1) {
             return XDP_DROP;
@@ -179,6 +156,8 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_DROP;
             }
 
+            bpf_printk("PERF SENDING echo packet \n");
+
             // Send perf event to manager
             struct perf_event_item event = {
                 .flags = FG_RECIEVE_ECHO,
@@ -196,6 +175,8 @@ int xdp_prog(struct xdp_md *ctx) {
             return XDP_DROP;
         } 
         else {
+
+            bpf_printk("Echo replying\n");
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
                 // Timestamp functionality
@@ -246,13 +227,20 @@ int xdp_prog(struct xdp_md *ctx) {
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_control) > data_end)
         return XDP_PASS;
 
-    if (udp_header->len == sizeof(struct udphdr) + sizeof(struct bfd_control)) {
+    if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_control))) {
         struct bfd_control *control_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
+
+
+        bpf_printk("BFD Control packet found\n");
+        __u8 version_byte = control_packet->version << 5 | control_packet->diagnostic;
+        bpf_printk("Version: %i\n", version_byte);
 
 
         // Check BFD version
         if (control_packet->version != 1)
             return XDP_DROP;
+
+        bpf_printk("version\n");
 
         // Check length field
         if (control_packet->auth_present) {
@@ -262,19 +250,25 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_DROP;
         }
 
+        bpf_printk("authentication\n");
+
         // Check actual packet size
         if (data_end - (void *)control_packet != control_packet->length)
             return XDP_DROP;
+
+        bpf_printk("length\n");
 
         // Check various fields
         if (!control_packet->detect_multi || control_packet->multipoint || !control_packet->my_disc)
             return XDP_DROP;
 
+        bpf_printk("various fields");
+
         // If our disc is not set without wishing to create session
         if (!control_packet->your_disc && control_packet->state != STATE_DOWN && control_packet->diagnostic != DIAG_NONE && !control_packet->poll)
             return XDP_DROP;
 
-
+        bpf_printk("specific create session thing");
 
         struct perf_event_item event = {
             .src_ip = ip_header->saddr
@@ -282,6 +276,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
         //If packet requires a response
         if (control_packet->poll) {
+
+            bpf_printk("Poll found\n");
 
             // Check for active request to create a session
             if (!control_packet->your_disc) {
@@ -297,6 +293,8 @@ int xdp_prog(struct xdp_md *ctx) {
                 event.new_remote_echo_rx = control_packet->required_echo_rx;
                 event.new_remote_min_rx = control_packet->required_rx;
                 event.new_remote_min_tx = control_packet->desired_tx;
+
+                bpf_printk("Create session perf event\n");
 
                 // Send perf event
                 __u64 flags = BPF_F_CURRENT_CPU;
@@ -337,6 +335,8 @@ int xdp_prog(struct xdp_md *ctx) {
             } 
             else { 
                 
+                bpf_printk("poll perf sending\n");
+
                 // Find what changed and report to manager
                 __u32 key = control_packet->your_disc;
                 struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
@@ -392,6 +392,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
             }
 
+            bpf_printk("poll being retransmitted\n");
+
             // Flip discriminators
             __u32 temp_disc = control_packet->my_disc;
             control_packet->my_disc = control_packet->your_disc;
@@ -422,6 +424,8 @@ int xdp_prog(struct xdp_md *ctx) {
         }
         else if (control_packet->final == 1) {
 
+            bpf_printk("Final found and perf event\n");
+
             // Set perf event fields
             event.flags = FG_RECIEVE_FINAL;
             event.local_disc = control_packet->your_disc;
@@ -433,6 +437,9 @@ int xdp_prog(struct xdp_md *ctx) {
             return XDP_DROP;
         }
         else {
+
+            bpf_printk("Async packet\n");
+
             __u32 key = control_packet->your_disc;
             struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
             if (current_session == NULL)
@@ -441,6 +448,8 @@ int xdp_prog(struct xdp_md *ctx) {
             event.flags = FG_RECIEVE_CONTROL;
             event.local_disc = control_packet->your_disc;
             event.diagnostic = control_packet->diagnostic;
+
+            bpf_printk("async perf event\n");
 
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -489,6 +498,8 @@ int xdp_prog(struct xdp_md *ctx) {
             return bpf_redirect(*ifindex, 0);
         }
     }
+
+    bpf_printk("default drop\n");
 
     return XDP_DROP;
 }
