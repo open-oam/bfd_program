@@ -95,12 +95,16 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     struct ethhdr *eth_header = data;
 
+    bpf_printk("ETH header correct");
+
     // Check for and assign IP header
     if (eth_header->h_proto != __constant_htons(ETH_P_IP))
         return XDP_PASS;
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr)  > data_end)
         return XDP_PASS;
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
+
+    bpf_printk("IP header correct");
 
     // Check for and assign UDP header
     if (ip_header->protocol != IPPROTO_UDP)
@@ -109,11 +113,14 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
 
+    bpf_printk("UDP header correct");
+
     // Check UDP destination port
     __u32 key = PROGKEY_PORT;
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
     if (dst_port == NULL)
         return XDP_ABORTED;
+    bpf_printk("Port: %i", *dst_port);
     if (udp_header->dest != *dst_port)
         return XDP_PASS;
 
