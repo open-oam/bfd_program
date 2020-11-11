@@ -1,4 +1,6 @@
+#define DEBUG
 #include "xdp_prog.h"
+
 
 BPF_MAP_DEF(program_info) = {
     .map_type = BPF_MAP_TYPE_ARRAY,
@@ -86,20 +88,20 @@ _Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_i
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx) {
 
-    bpf_printk("Packet recieved");
+    bpf_printk("Packet recieved\n");
     
     // Get context pointers
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
-    bpf_printk("Pointers assigned");
+    bpf_printk("Pointers assigned\n");
 
     // Assign ethernet header
     if (data + sizeof(struct ethhdr) > data_end)
         return XDP_PASS;
     struct ethhdr *eth_header = data;
 
-    bpf_printk("ETH header correct");
+    bpf_printk("ETH header correct\n");
 
     // Check for and assign IP header
     if (eth_header->h_proto != __constant_htons(ETH_P_IP))
@@ -108,25 +110,36 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
 
-    bpf_printk("IP header correct");
+    bpf_printk("IP header correct\n");
+
+    int udp_protocol = ip_header->protocol;
+    bpf_printk("Protocol: %i\n");
 
     // Check for and assign UDP header
     if (ip_header->protocol != IPPROTO_UDP)
         return XDP_PASS;
+    
+    bpf_printk("IP type is UDP\n");
+
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) > data_end)
         return XDP_PASS;
+
+    bpf_printk("UDP Size is fine for verifier\n");
+
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
 
-    bpf_printk("UDP header correct");
+    bpf_printk("UDP header correct\n");
 
     // Check UDP destination port
     __u32 key = PROGKEY_PORT;
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
     if (dst_port == NULL)
         return XDP_ABORTED;
-    bpf_printk("Port: %i", *dst_port);
+    bpf_printk("Port: %i\n", *dst_port);
     if (udp_header->dest != *dst_port)
         return XDP_PASS;
+
+    bpf_printk("BFD getting through\n");
 
     ////////////////////
     //                //
