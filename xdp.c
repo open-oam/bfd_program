@@ -128,6 +128,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
 
+    int udp_port = udp_header->dest;
+    bpf_printk("Actual port: %i", udp_port);
     bpf_printk("UDP header correct\n");
 
     // Check UDP destination port
@@ -136,8 +138,8 @@ int xdp_prog(struct xdp_md *ctx) {
     if (dst_port == NULL)
         return XDP_ABORTED;
     bpf_printk("Wanted Port: %i\n", *dst_port);
-    int udp_port = udp_header->dest;
-    bpf_printk("Actual port: %i", udp_port);
+    
+    
 
     if (udp_header->dest != *dst_port)
         return XDP_PASS;
