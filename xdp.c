@@ -261,7 +261,7 @@ int xdp_prog(struct xdp_md *ctx) {
         __u8 flag_byte = control_packet->multipoint << 7 | control_packet->demand << 6 | control_packet->auth_present << 5
                         | control_packet->cpi << 4 | control_packet->final << 3 | control_packet->poll << 2 | control_packet->state;
 
-        bpf_printk("%x\n", flag_byte);
+        bpf_printk("BPF Flags: %x\n", flag_byte);
 
 
         //If packet requires a response
