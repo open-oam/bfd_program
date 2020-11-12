@@ -86,7 +86,7 @@ _Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_i
 // }
 
 SEC("xdp")
-int xdp_prog(struct xdp_md *ctx) {    
+int xdp_prog(struct xdp_md *ctx) {
     // Get context pointers
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
@@ -102,6 +102,9 @@ int xdp_prog(struct xdp_md *ctx) {
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr)  > data_end)
         return XDP_PASS;
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
+
+    __u16 ip_id = ip_header->id;
+    bpf_printk("IP Packet recieved. ID: %u\n", ip_id);
 
     // Check for and assign UDP header
     if (ip_header->protocol != IPPROTO_UDP)
@@ -133,7 +136,7 @@ int xdp_prog(struct xdp_md *ctx) {
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_echo))) {
         struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
 
-        bpf_printk("Echo packet found\n");
+        bpf_printk("Packet identified: Echo\n");
 
         if (echo_packet->bfd_version != 1) {
             return XDP_DROP;
@@ -142,6 +145,8 @@ int xdp_prog(struct xdp_md *ctx) {
         // If packet is a reply to echo
         if (echo_packet->reply) {
             
+            bpf_printk("Echo packet is reply\n");
+
             __u32 my_discriminator = echo_packet->your_disc;
 
             if (echo_packet->code == ECHO_TRACE) {
@@ -156,7 +161,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_DROP;
             }
 
-            bpf_printk("PERF SENDING echo packet \n");
+            bpf_printk("PERF: echo packet recieved\n");
 
             // Send perf event to manager
             struct perf_event_item event = {
@@ -176,7 +181,7 @@ int xdp_prog(struct xdp_md *ctx) {
         } 
         else {
 
-            bpf_printk("Echo replying\n");
+            bpf_printk("Echo packet is response\n");
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
                 // Timestamp functionality
@@ -184,6 +189,8 @@ int xdp_prog(struct xdp_md *ctx) {
             else if (echo_packet->code == ECHO_TRACE) {
                 // Trace functionality
             }
+
+            bpf_printk("Replying to echo packet\n");
 
             // Flip discriminators
             __u32 temp_disc = echo_packet->my_disc;
@@ -230,6 +237,8 @@ int xdp_prog(struct xdp_md *ctx) {
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_control))) {
         struct bfd_control *control_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
 
+        bpf_printk("Packet Identified: Control\n");
+
         // Check BFD version
         if (control_packet->version != 1)
             return XDP_DROP;
@@ -258,6 +267,8 @@ int xdp_prog(struct xdp_md *ctx) {
             .src_ip = ip_header->saddr
         };
 
+        bpf_printk("Control packet tests passed\n");
+
         __u8 flag_byte = control_packet->multipoint << 7 | control_packet->demand << 6 | control_packet->auth_present << 5
                         | control_packet->cpi << 4 | control_packet->final << 3 | control_packet->poll << 2 | control_packet->state;
 
@@ -267,10 +278,12 @@ int xdp_prog(struct xdp_md *ctx) {
         //If packet requires a response
         if (control_packet->poll) {
 
-            bpf_printk("Poll found\n");
+            bpf_printk("Control packet poll set\n");
 
             // Check for active request to create a session
             if (!control_packet->your_disc) {
+                bpf_printk("Control packet session creation request\n");
+
                 // Generate discriminator
                 __u32 my_discriminator = bpf_get_prandom_u32();
                 bpf_printk("Random disc: %i\n", my_discriminator);
@@ -285,7 +298,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
                 event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
 
-                bpf_printk("Create session perf event\n");
+                bpf_printk("PERF: create session\n");
 
                 // Send perf event
                 __u64 flags = BPF_F_CURRENT_CPU;
@@ -325,7 +338,7 @@ int xdp_prog(struct xdp_md *ctx) {
             } 
             else { 
                 
-                bpf_printk("poll perf sending\n");
+                bpf_printk("PERF: normal poll packet\n");
 
                 // Find what changed and report to manager
                 __u32 key = ___constant_swab32(control_packet->your_disc);
@@ -379,7 +392,7 @@ int xdp_prog(struct xdp_md *ctx) {
 
             }
 
-            bpf_printk("poll being retransmitted\n");
+            bpf_printk("Poll packet being retransmitted\n");
 
             // Flip discriminators
             __u32 temp_disc = control_packet->my_disc;
@@ -411,7 +424,7 @@ int xdp_prog(struct xdp_md *ctx) {
         }
         else if (control_packet->final == 1) {
 
-            bpf_printk("Final found and perf event\n");
+            bpf_printk("Control packet final set\n");
 
             // Set perf event fields
             event.flags = FG_RECIEVE_FINAL;
@@ -425,7 +438,7 @@ int xdp_prog(struct xdp_md *ctx) {
         }
         else {
 
-            bpf_printk("Async packet\n");
+            bpf_printk("Control packet Async packet\n");
 
             __u32 key = control_packet->your_disc;
             struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
@@ -436,7 +449,7 @@ int xdp_prog(struct xdp_md *ctx) {
             event.local_disc = ___constant_swab32(control_packet->your_disc);
             event.diagnostic = control_packet->diagnostic;
 
-            bpf_printk("async perf event\n");
+            bpf_printk("PERF: async\n");
 
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
