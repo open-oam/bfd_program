@@ -464,7 +464,7 @@ int xdp_prog(struct xdp_md *ctx) {
 
             bpf_printk("Control packet Async packet\n");
 
-            __u32 key = control_packet->your_disc;
+            __u32 key = ___constant_swab32(control_packet->your_disc);
             struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
             if (current_session == NULL)
                 return XDP_ABORTED;
