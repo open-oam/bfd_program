@@ -115,6 +115,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
     struct udphdr *udp_header = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
 
+    bpf_printk("Checking UDP\n");
+
     // Check UDP destination port
     __u32 key = PROGKEY_PORT;
     __u32 *dst_port = bpf_map_lookup_elem(&program_info, &key);
@@ -124,6 +126,8 @@ int xdp_prog(struct xdp_md *ctx) {
     if (udp_header->dest != ___constant_swab16(*dst_port))
         return XDP_PASS;
 
+    bpf_printk("UDP packet destined for program\n");
+
     ////////////////////
     //                //
     //    BFD ECHO    //
@@ -132,6 +136,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_echo) > data_end)
         return XDP_DROP;
+
+    bpf_printk("Didn't pass verifier\n");    
 
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_echo))) {
         struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
@@ -231,8 +237,13 @@ int xdp_prog(struct xdp_md *ctx) {
     //                   //
     ///////////////////////
 
+    bpf_printk("Checking for BFD Control\n");
+
+
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_control) > data_end)
         return XDP_PASS;
+
+    bpf_printk("Didn't pass verifier\n");
 
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_control))) {
         struct bfd_control *control_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
