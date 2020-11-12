@@ -103,7 +103,7 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     struct iphdr *ip_header = data + sizeof(struct ethhdr);
 
-    __u16 ip_id = ip_header->id;
+    __u16 ip_id = ___constant_swab16(ip_header->id);
     bpf_printk("IP Packet recieved. ID: %u\n", ip_id);
 
     // Check for and assign UDP header
@@ -436,6 +436,9 @@ int xdp_prog(struct xdp_md *ctx) {
         else if (control_packet->final == 1) {
 
             bpf_printk("Control packet final set\n");
+
+            int state = control_packet->state;
+            bpf_printk("State: %i\n", state);
 
             // Set perf event fields
             event.flags = FG_RECIEVE_FINAL;
