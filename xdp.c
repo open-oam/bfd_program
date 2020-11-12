@@ -388,7 +388,10 @@ int xdp_prog(struct xdp_md *ctx) {
                 bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
 
                 control_packet->diagnostic = current_session->diagnostic;
-                control_packet->state = current_session->state;
+                if (current_session->state == STATE_INIT && control_packet->state == STATE_UP)
+                    control_packet->state = STATE_UP;
+                else
+                    control_packet->state = current_session->state;
                 control_packet->poll = 0;
                 control_packet->final = 1;
                 control_packet->cpi = 1;
