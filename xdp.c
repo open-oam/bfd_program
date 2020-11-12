@@ -275,7 +275,7 @@ int xdp_prog(struct xdp_md *ctx) {
             return XDP_DROP;
 
         struct perf_event_item event = {
-            .src_ip = ip_header->saddr
+            .src_ip = ___constant_swab32(ip_header->saddr)
         };
 
         bpf_printk("Control packet tests passed\n");
@@ -477,49 +477,6 @@ int xdp_prog(struct xdp_md *ctx) {
 
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
-
-            // Asynchronus mode BFD control packet response
-            control_packet->diagnostic = current_session->diagnostic;
-            control_packet->state = current_session->state;
-            control_packet->poll = 0;
-            control_packet->final = 0;
-            control_packet->cpi = 1;
-            control_packet->auth_present = 0;
-            control_packet->demand = current_session->demand;
-            control_packet->multipoint = 0;
-            control_packet->detect_multi = current_session->detect_multi;
-            control_packet->length = sizeof(struct bfd_control);
-            control_packet->desired_tx = ___constant_swab32(current_session->min_tx);
-            control_packet->required_rx = ___constant_swab32(current_session->min_rx);
-            control_packet->required_echo_rx = ___constant_swab32(current_session->echo_rx);
-
-            // Flip discriminators
-            __u32 temp_disc = control_packet->my_disc;
-            control_packet->my_disc = control_packet->your_disc;
-            control_packet->your_disc = temp_disc;
-
-            // Swap MAC addresses
-            __u8 temp_mac[ETH_ALEN];
-            memcpy(temp_mac, eth_header->h_source, ETH_ALEN);
-            memcpy(eth_header->h_source, eth_header->h_dest, ETH_ALEN);
-            memcpy(eth_header->h_dest, temp_mac, ETH_ALEN);
-
-            // Swap IP addresses
-            __u32 temp_ip = ip_header->daddr;
-            ip_header->daddr = ip_header->saddr;
-            ip_header->saddr = temp_ip;
-
-            // Swap udp ports
-            __u16 temp_port = udp_header->uh_sport;
-            udp_header->uh_sport = udp_header->uh_dport;
-            udp_header->uh_dport = temp_port;
-
-            // Redirect packet
-            key = PROGKEY_IFINDEX;
-            __u32 *ifindex = bpf_map_lookup_elem(&program_info, &key);
-            if (ifindex == NULL)
-                return XDP_ABORTED;
-            return bpf_redirect(*ifindex, 0);
         }
     }
 
