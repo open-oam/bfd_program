@@ -440,6 +440,12 @@ int xdp_prog(struct xdp_md *ctx) {
             // Set perf event fields
             event.flags = FG_RECIEVE_FINAL;
             event.local_disc = ___constant_swab32(control_packet->your_disc);
+            event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
+            event.new_remote_state = control_packet->state;
+            event.diagnostic = control_packet->diagnostic;
+            event.new_remote_echo_rx = ___constant_swab32(control_packet->required_echo_rx);
+            event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
+            event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
 
             // Send perf event
             __u64 flags = BPF_F_CURRENT_CPU;
