@@ -29,7 +29,7 @@ struct bfd_session {
 };
 
 BPF_MAP_DEF(session_map) = {
-    .map_type = BPF_MAP_TYPE_ARRAY,
+    .map_type = BPF_MAP_TYPE_HASH,
     .key_size = sizeof(__u32),
     .value_size = sizeof(struct bfd_session),
     .max_entries = 256,
