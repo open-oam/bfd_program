@@ -173,7 +173,7 @@ int xdp_prog(struct xdp_md *ctx) {
             struct perf_event_item event = {
                 .flags = FG_RECIEVE_ECHO,
                 .local_disc = my_discriminator,
-                .src_ip = ip_header->saddr
+                .src_ip = ___constant_swab32(ip_header->saddr)
             };
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
