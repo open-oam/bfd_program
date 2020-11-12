@@ -353,11 +353,12 @@ int xdp_prog(struct xdp_md *ctx) {
 
                 // Find what changed and report to manager
                 __u32 key = ___constant_swab32(control_packet->your_disc);
+                bpf_printk("Session key: %i\n", key);
                 struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
-                if (current_session == NULL)
+                if (current_session == NULL) {
+                    bpf_printk("Poll packet, current session NULL\n");
                     return XDP_ABORTED;
-                
-                if (current_session == NULL) return XDP_DROP;
+                }
 
                 event.flags = 0;
                 event.diagnostic = control_packet->diagnostic;
