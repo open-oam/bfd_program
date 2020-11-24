@@ -364,34 +364,43 @@ int xdp_prog(struct xdp_md *ctx) {
                 event.diagnostic = control_packet->diagnostic;
                 event.local_disc = ___constant_swab32(control_packet->your_disc);
 
-                if (control_packet->state != current_session->remote_state){
+                if (control_packet->state == STATE_ADMIN_DOWN) {
                     event.new_remote_state = control_packet->state;
-                    event.flags = event.flags | FG_CHANGED_STATE;
+                    event.flags = FG_TEARDOWN_SESSION;
+                } 
+                else {
+                    if (control_packet->state != current_session->remote_state){
+                        event.new_remote_state = control_packet->state;
+                        event.flags = event.flags | FG_CHANGED_STATE;
+                    }
+                    if (control_packet->my_disc != ___constant_swab32(current_session->remote_disc)){
+                        event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
+                        event.flags = event.flags | FG_CHANGED_DISC;
+                    }
+                    if (control_packet->desired_tx != ___constant_swab32(current_session->remote_min_tx)) {
+                        event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
+                        event.flags = event.flags | FG_CHANGED_TIMING;
+                    }
+                    if (control_packet->required_rx != ___constant_swab32(current_session->remote_min_rx)) {
+                        event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
+                        event.flags = event.flags | FG_CHANGED_TIMING;
+                    }
+                    if (control_packet->required_echo_rx != ___constant_swab32(current_session->remote_echo_rx)) {
+                        event.new_remote_echo_rx = ___constant_swab32(control_packet->required_echo_rx);
+                        event.flags = event.flags | FG_CHANGED_TIMING;
+                    }
                 }
-                if (control_packet->my_disc != ___constant_swab32(current_session->remote_disc)){
-                    event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
-                    event.flags = event.flags | FG_CHANGED_DISC;
-                }
-                if (control_packet->desired_tx != ___constant_swab32(current_session->remote_min_tx)) {
-                    event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
-                    event.flags = event.flags | FG_CHANGED_TIMING;
-                }
-                if (control_packet->required_rx != ___constant_swab32(current_session->remote_min_rx)) {
-                    event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
-                    event.flags = event.flags | FG_CHANGED_TIMING;
-                }
-                if (control_packet->required_echo_rx != ___constant_swab32(current_session->remote_echo_rx)) {
-                    event.new_remote_echo_rx = ___constant_swab32(control_packet->required_echo_rx);
-                    event.flags = event.flags | FG_CHANGED_TIMING;
-                }
-        
+
+
                 __u64 flags = BPF_F_CURRENT_CPU;
                 bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
 
                 control_packet->diagnostic = current_session->diagnostic;
                 if (current_session->state == STATE_INIT && control_packet->state == STATE_UP)
                     control_packet->state = STATE_UP;
-                else
+                else if (control_packet->state == STATE_ADMIN_DOWN)
+                    control_packet->state = STATE_ADMIN_DOWN;
+                else 
                     control_packet->state = current_session->state;
                 control_packet->poll = 0;
                 control_packet->final = 1;
