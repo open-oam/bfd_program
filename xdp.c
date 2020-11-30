@@ -137,7 +137,7 @@ int xdp_prog(struct xdp_md *ctx) {
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_echo) > data_end)
         return XDP_DROP;
 
-    bpf_printk("Didn't pass verifier\n");    
+    bpf_printk("Passed verifier\n");    
 
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_echo))) {
         struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);

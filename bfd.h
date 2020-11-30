@@ -68,15 +68,10 @@ struct bfd_control {
 };
 
 struct bfd_echo {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-        __u8    code : 4,
-                reply : 1,
-                bfd_version : 3;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-        __u8    bfd_version : 3,
-                reply : 1,
-                code : 4;
-#endif
+        __u8 bfd_version;
+        __u8 code;
+        __u8 reply;
+        __u8 unused;
         __u32 my_disc;
         __u32 your_disc;
         __u32 timestamp;
