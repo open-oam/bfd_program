@@ -153,7 +153,7 @@ int xdp_prog(struct xdp_md *ctx) {
             
             bpf_printk("Echo packet is reply\n");
 
-            __u32 my_discriminator = echo_packet->your_disc;
+            __u32 my_discriminator = ___constant_swab32(echo_packet->your_disc);
 
             if (echo_packet->code == ECHO_TRACE) {
                 // Trace functionality
@@ -163,9 +163,6 @@ int xdp_prog(struct xdp_md *ctx) {
             struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
             if (session_info == NULL)
                 return XDP_ABORTED;
-            if (echo_packet->my_disc != session_info->remote_disc) {
-                return XDP_DROP;
-            }
 
             bpf_printk("PERF: echo packet recieved\n");
 
@@ -177,7 +174,7 @@ int xdp_prog(struct xdp_md *ctx) {
             };
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
-                event.timestamp = echo_packet->timestamp;
+                event.timestamp = ___constant_swab32(echo_packet->timestamp);
             }
 
             __u64 flags = BPF_F_CURRENT_CPU;
@@ -187,7 +184,7 @@ int xdp_prog(struct xdp_md *ctx) {
         } 
         else {
 
-            bpf_printk("Echo packet is response\n");
+            bpf_printk("Echo packet is not reply\n");
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
                 // Timestamp functionality
