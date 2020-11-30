@@ -377,6 +377,9 @@ int xdp_prog(struct xdp_md *ctx) {
                         event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
                         event.flags = event.flags | FG_CHANGED_DISC;
                     }
+                    if (control_packet->demand != current_session->demand) {
+                        event.flags = event.flags | FG_CHANGED_DEMAND;
+                    }
                     if (control_packet->desired_tx != ___constant_swab32(current_session->remote_min_tx)) {
                         event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
                         event.flags = event.flags | FG_CHANGED_TIMING;
