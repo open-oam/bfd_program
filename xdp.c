@@ -65,6 +65,10 @@ _Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_i
 
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx) {
+
+    //Get timestamp
+    __u64 timestamp = bpf_ktime_get_ns();
+
     // Get context pointers
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
@@ -155,6 +159,9 @@ int xdp_prog(struct xdp_md *ctx) {
             if (echo_packet->code == ECHO_TIMESTAMP) {
                 event.timestamp = ___constant_swab32(echo_packet->timestamp);
             }
+
+            //Get timestamp_diff
+            event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
 
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -284,6 +291,9 @@ int xdp_prog(struct xdp_md *ctx) {
 
                 bpf_printk("PERF: create session\n");
 
+                //Get timestamp_diff
+                event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+
                 // Send perf event
                 __u64 flags = BPF_F_CURRENT_CPU;
                 bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -379,6 +389,8 @@ int xdp_prog(struct xdp_md *ctx) {
                     }
                 }
 
+                //Get timestamp_diff
+                event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
 
                 __u64 flags = BPF_F_CURRENT_CPU;
                 bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -453,6 +465,10 @@ int xdp_prog(struct xdp_md *ctx) {
             event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
             event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
 
+            //Get timestamp_diff
+            event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+
+
             // Send perf event
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -475,6 +491,9 @@ int xdp_prog(struct xdp_md *ctx) {
             event.diagnostic = control_packet->diagnostic;
 
             bpf_printk("PERF: async\n");
+
+            //Get timestamp_diff
+            event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
 
             //Set the perf event
             __u64 flags = BPF_F_CURRENT_CPU;
