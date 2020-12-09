@@ -1,7 +1,7 @@
 #define DEBUG
 #include "xdp_prog.h"
 
-
+//Map for information used by the program in runtime
 BPF_MAP_DEF(program_info) = {
     .map_type = BPF_MAP_TYPE_ARRAY,
     .key_size = sizeof(__u32),
@@ -10,6 +10,7 @@ BPF_MAP_DEF(program_info) = {
 };
 BPF_MAP_ADD(program_info);
 
+//Structure used to store the data for each session
 struct bfd_session {
     __u8 state : 2,
         remote_state : 2,
@@ -28,6 +29,7 @@ struct bfd_session {
     __u32 remote_echo_rx;
 };
 
+//Map to store data for each session
 BPF_MAP_DEF(session_map) = {
     .map_type = BPF_MAP_TYPE_HASH,
     .key_size = sizeof(__u32),
@@ -60,30 +62,6 @@ struct perf_event_item {
 _Static_assert(sizeof(struct perf_event_item) == 32, "wrong size of perf_event_item");
 
 
-
-// __u16 calc_checksum_diff_u8(__u16 old_checksum, __u8 old_value, __u8 new_value, __u32 value_offset)
-// {
-
-//     if (new_value == old_value)
-//         return old_checksum;
-//     int offset = 8 * (value_offset % 2);
-
-//     if (new_value > old_value)
-//     {
-//         int modifier = ((int)new_value - (int)old_value) << offset;
-//         __u32 checksum = (__u32)old_checksum - modifier;
-//         checksum = (checksum & 0xffff) + (checksum >> 16);
-//         return checksum;
-//     }
-//     else if (old_value > new_value)
-//     {
-//         int modifier = ((int)old_value - (int)new_value) << offset;
-//         __u32 checksum = (__u32)old_checksum + modifier;
-//         checksum = (checksum & 0xffff) + (checksum >> 16);
-//         return checksum;
-//     }
-//     return -1;
-// }
 
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx) {
@@ -134,16 +112,19 @@ int xdp_prog(struct xdp_md *ctx) {
     //                //
     ////////////////////
 
+    //Verifier check for BFD Echo packet
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct bfd_echo) > data_end)
         return XDP_DROP;
 
     bpf_printk("Passed verifier\n");    
 
+    //If the size in UDP length field is the correct length for a BFD echo packet
     if (udp_header->len == ___constant_swab16(sizeof(struct udphdr) + sizeof(struct bfd_echo))) {
         struct bfd_echo *echo_packet = data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
 
         bpf_printk("Packet identified: Echo\n");
 
+        //Confirm version
         if (echo_packet->bfd_version != 1) {
             return XDP_DROP;
         }
@@ -155,9 +136,7 @@ int xdp_prog(struct xdp_md *ctx) {
 
             __u32 my_discriminator = ___constant_swab32(echo_packet->your_disc);
 
-            if (echo_packet->code == ECHO_TRACE) {
-                // Trace functionality
-            }
+            bpf_printk("My discriminator: %i\n", my_discriminator);
 
             // Check that session and discriminators are valid
             struct bfd_session *session_info = bpf_map_lookup_elem(&session_map, &my_discriminator);
@@ -188,9 +167,6 @@ int xdp_prog(struct xdp_md *ctx) {
 
             if (echo_packet->code == ECHO_TIMESTAMP) {
                 // Timestamp functionality
-            }
-            else if (echo_packet->code == ECHO_TRACE) {
-                // Trace functionality
             }
 
             bpf_printk("Replying to echo packet\n");
@@ -321,6 +297,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 control_packet->demand = 0;
                 control_packet->multipoint = 0;
                 control_packet->diagnostic = DIAG_NONE;
+                //Pull the local detect multi value
                 __u32 key = PROGKEY_DETECT_MULTI;
                 __u32 *value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
@@ -328,16 +305,19 @@ int xdp_prog(struct xdp_md *ctx) {
                 control_packet->detect_multi = *(__u32 *)value;
                 control_packet->length = sizeof(struct bfd_control);
                 control_packet->your_disc = ___constant_swab32(my_discriminator);
+                //Pull the local min_tx value
                 key = PROGKEY_MIN_TX;
                 value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
                     return XDP_ABORTED;
                 control_packet->desired_tx = ___constant_swab32(*(__u32 *)value);
+                //Pull the local min_rx value
                 key = PROGKEY_MIN_RX;
                 value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
                     return XDP_ABORTED;
                 control_packet->required_rx = ___constant_swab32(*(__u32 *)value);
+                //Pull the local min_echo_rx value
                 key = PROGKEY_MIN_ECHO_RX;
                 value = bpf_map_lookup_elem(&program_info, &key);
                 if (value == NULL)
@@ -357,34 +337,42 @@ int xdp_prog(struct xdp_md *ctx) {
                     return XDP_ABORTED;
                 }
 
+                //Set some defaults for the perf event
                 event.flags = 0;
                 event.diagnostic = control_packet->diagnostic;
                 event.local_disc = ___constant_swab32(control_packet->your_disc);
 
+                //If the remote state is ADMIN_DOWN, it is a part of the handshake so set new parameter
                 if (control_packet->state == STATE_ADMIN_DOWN) {
                     event.new_remote_state = control_packet->state;
                     event.flags = FG_TEARDOWN_SESSION;
                 } 
                 else {
+                    //If the state changed
                     if (control_packet->state != current_session->remote_state){
                         event.new_remote_state = control_packet->state;
                         event.flags = event.flags | FG_CHANGED_STATE;
                     }
+                    //If the discriminator changed
                     if (control_packet->my_disc != ___constant_swab32(current_session->remote_disc)){
                         event.new_remote_disc = ___constant_swab32(control_packet->my_disc);
                         event.flags = event.flags | FG_CHANGED_DISC;
                     }
+                    //If demand mode changed
                     if (control_packet->demand != current_session->demand) {
                         event.flags = event.flags | FG_CHANGED_DEMAND;
                     }
+                    //If min_tx changed
                     if (control_packet->desired_tx != ___constant_swab32(current_session->remote_min_tx)) {
                         event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
                         event.flags = event.flags | FG_CHANGED_TIMING;
                     }
+                    //If min_rx changed
                     if (control_packet->required_rx != ___constant_swab32(current_session->remote_min_rx)) {
                         event.new_remote_min_rx = ___constant_swab32(control_packet->required_rx);
                         event.flags = event.flags | FG_CHANGED_TIMING;
                     }
+                    //If min_echo_rx changed
                     if (control_packet->required_echo_rx != ___constant_swab32(current_session->remote_echo_rx)) {
                         event.new_remote_echo_rx = ___constant_swab32(control_packet->required_echo_rx);
                         event.flags = event.flags | FG_CHANGED_TIMING;
@@ -395,6 +383,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 __u64 flags = BPF_F_CURRENT_CPU;
                 bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
 
+                //Mangle packet for response
                 control_packet->diagnostic = current_session->diagnostic;
                 if (current_session->state == STATE_INIT && control_packet->state == STATE_UP)
                     control_packet->state = STATE_UP;
@@ -446,6 +435,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_ABORTED;
             return bpf_redirect(*ifindex, 0);
         }
+        //If packet is final
         else if (control_packet->final == 1) {
 
             bpf_printk("Control packet final set\n");
@@ -472,18 +462,21 @@ int xdp_prog(struct xdp_md *ctx) {
         else {
 
             bpf_printk("Control packet Async packet\n");
-
+            
+            //Pull session info and verify
             __u32 key = ___constant_swab32(control_packet->your_disc);
             struct bfd_session *current_session = bpf_map_lookup_elem(&session_map, &key);
             if (current_session == NULL)
                 return XDP_ABORTED;
             
+            // Set perf event
             event.flags = FG_RECIEVE_CONTROL;
             event.local_disc = ___constant_swab32(control_packet->your_disc);
             event.diagnostic = control_packet->diagnostic;
 
             bpf_printk("PERF: async\n");
 
+            //Set the perf event
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
         }

@@ -12,7 +12,6 @@
 // Echo Codes
 #define ECHO_DEFAULT    0
 #define ECHO_TIMESTAMP  1
-#define ECHO_TRACE      2
 
 /* Diagnostic Codes */
 #define DIAG_NONE                       0
