@@ -161,7 +161,7 @@ int xdp_prog(struct xdp_md *ctx) {
             }
 
             //Get timestamp_diff
-            event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+            event.timestamp = (__u32)(0xFFFFFFFF & (bpf_ktime_get_ns() - timestamp));
 
             __u64 flags = BPF_F_CURRENT_CPU;
             bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -292,7 +292,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 bpf_printk("PERF: create session\n");
 
                 //Get timestamp_diff
-                event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+                event.timestamp = (__u32)(0xFFFFFFFF & (bpf_ktime_get_ns() - timestamp));
 
                 // Send perf event
                 __u64 flags = BPF_F_CURRENT_CPU;
@@ -390,7 +390,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 }
 
                 //Get timestamp_diff
-                event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+                event.timestamp = (__u32)(0xFFFFFFFF & (bpf_ktime_get_ns() - timestamp));
 
                 __u64 flags = BPF_F_CURRENT_CPU;
                 bpf_perf_event_output(ctx, &perfmap, flags, &event, sizeof(event));
@@ -466,7 +466,7 @@ int xdp_prog(struct xdp_md *ctx) {
             event.new_remote_min_tx = ___constant_swab32(control_packet->desired_tx);
 
             //Get timestamp_diff
-            event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+            event.timestamp = (__u32)(0xFFFFFFFF & (bpf_ktime_get_ns() - timestamp));
 
 
             // Send perf event
@@ -493,7 +493,7 @@ int xdp_prog(struct xdp_md *ctx) {
             bpf_printk("PERF: async\n");
 
             //Get timestamp_diff
-            event.timestamp = (__u32)(0xFFFFFFFF & (timestamp - bpf_ktime_get_ns()));
+            event.timestamp = (__u32)(0xFFFFFFFF & (bpf_ktime_get_ns() - timestamp));
 
             //Set the perf event
             __u64 flags = BPF_F_CURRENT_CPU;
